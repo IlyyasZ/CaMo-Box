@@ -1,0 +1,87 @@
+#include <SPI.h>
+#include <MFRC522.h>
+#include <Servo.h>
+#include <DFPlayer_Mini_Mp3.h>
+#include <SoftwareSerial.h> // importierten Bibliotheken für die Funktion mp3_set_serial()
+
+#define RST_PIN     9       // SPI Reset Pin
+#define SS_PIN      10      // SPI Slave Select Pin
+#define GREEN_LED_PIN 7     // Pin für grüne LED
+#define RED_LED_PIN 6       // Pin für rote LED
+#define SERVO_PIN   3       // Pin für Servo-Motor
+#define RX_PIN      11      // Pin für RX des MP3-Moduls
+#define TX_PIN      12      // Pin für TX des MP3-Moduls
+
+MFRC522 mfrc522(SS_PIN, RST_PIN);       // Instanz des MFRC522 erzeugen
+Servo myServo;                          // Instanz des Servo-Motors erzeugen
+SoftwareSerial myTune(RX_PIN, TX_PIN); // SoftwareSerial für MP3-Modul
+
+unsigned long doorOpenTime = 0;
+bool doorOpen = false;
+
+void setup() {
+    // Diese Funktion wird einmalig beim Start ausgeführt
+    Serial.begin(9600);     // Serielle Kommunikation mit dem PC initialisieren
+    SPI.begin();            // Initialisiere SPI Kommunikation
+    mfrc522.PCD_Init();     // Initialisiere MFRC522 Lesemodul
+    pinMode(GREEN_LED_PIN, OUTPUT); // Setze Pin für grüne LED als Ausgang
+    pinMode(RED_LED_PIN, OUTPUT);   // Setze Pin für rote LED als Ausgang
+    myServo.attach(SERVO_PIN);      // Servo-Motor an den definierten Pin anschließen
+    myServo.write(0);               // Schloss verriegelt (Servo auf 0 Grad)
+    myTune.begin(9600);           // Initialisiere SoftwareSerial für MP3-Modul
+    mp3_set_serial(myTune);       // Setze die serielle Verbindung für das MP3-Modul
+    mp3_set_volume(20);             // Setze die Lautstärke (0-30)
+}
+
+void loop() {
+    // Diese Funktion wird in Endlosschleife ausgeführt
+
+    // Nur wenn eine Karte gefunden wird und gelesen werden konnte, wird der Inhalt von IF ausgeführt
+    // PICC = proximity integrated circuit card = kontaktlose Chipkarte
+    if (mfrc522.PICC_IsNewCardPresent() && mfrc522.PICC_ReadCardSerial()) {
+        Serial.print("Gelesene UUID: ");
+        String uid = "";
+        for (byte i = 0; i < mfrc522.uid.size; i++) {
+            // Abstand zwischen HEX-Zahlen und führende Null bei Byte < 16
+            Serial.print(mfrc522.uid.uidByte[i] < 0x10 ? "0" : " ");
+            Serial.print(mfrc522.uid.uidByte[i], HEX);
+            uid += String(mfrc522.uid.uidByte[i], HEX);
+        }
+        Serial.println();
+
+        if (isValidUID(uid)) {
+            digitalWrite(GREEN_LED_PIN, HIGH); // Grüne LED an
+            myServo.write(90); // Schloss entriegeln (Servo auf 90 Grad)
+            doorOpenTime = millis(); // Zeit speichern, wenn die Tür geöffnet wird
+            doorOpen = true;
+            mp3_play(1); // Sound für erfolgreiche Autorisierung
+            delay(1000); // 1 Sekunde warten
+            digitalWrite(GREEN_LED_PIN, LOW);  // Grüne LED aus
+        } else {
+            digitalWrite(RED_LED_PIN, HIGH); // Rote LED an
+            mp3_play(2); // Sound für fehlgeschlagene Autorisierung
+            delay(1000); 
+            digitalWrite(RED_LED_PIN, LOW);  // Rote LED aus
+        }
+
+        // Versetzt die gelesene Karte in einen Ruhemodus, um nach anderen Karten suchen zu können.
+        mfrc522.PICC_HaltA();
+        delay(1000);
+    }
+
+    // Überprüfen, ob die Tür länger als 5 Minuten offen ist
+    if (doorOpen && (millis() - doorOpenTime > 300000)) { // 5 Minuten = 300000 Millisekunden
+        mp3_play(3); // Spiele Sound für Tür zu lange offen
+    }
+}
+
+bool isValidUID(String uid) {
+    // Hier die gültigen UIDs eintragen
+    String validUIDs[] = {"12345678", "87654321"};
+    for (String validUID : validUIDs) {
+        if (uid == validUID) {
+            return true;
+        }
+    }
+    return false;
+}
